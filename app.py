@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import pycountry
 
 # --- Configuração da Página ---
-# Define o título da página, o ícone e o layout para ocupar a largura inteira.
 st.set_page_config(
     page_title="Dashboard de Salários na Área de Dados",
     page_icon="📊",
@@ -33,7 +33,6 @@ tamanhos_disponiveis = sorted(df['tamanho_empresa'].unique())
 tamanhos_selecionados = st.sidebar.multiselect("Tamanho da Empresa", tamanhos_disponiveis, default=tamanhos_disponiveis)
 
 # --- Filtragem do DataFrame ---
-# O dataframe principal é filtrado com base nas seleções feitas na barra lateral.
 df_filtrado = df[
     (df['ano'].isin(anos_selecionados)) &
     (df['senioridade'].isin(senioridades_selecionadas)) &
@@ -54,7 +53,8 @@ if not df_filtrado.empty:
     total_registros = df_filtrado.shape[0]
     cargo_mais_frequente = df_filtrado["cargo"].mode()[0]
 else:
-    salario_medio, salario_mediano, salario_maximo, total_registros, cargo_mais_comum = 0, 0, 0, ""
+    salario_medio = salario_maximo = total_registros = 0
+    cargo_mais_frequente = ""
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Salário médio", f"${salario_medio:,.0f}")
@@ -121,20 +121,50 @@ with col_graf3:
 with col_graf4:
     if not df_filtrado.empty:
         df_ds = df_filtrado[df_filtrado['cargo'] == 'Data Scientist']
-        if not df_ds.empty and 'employee_residence' in df_ds.columns:
-            media_ds_pais = df_ds.groupby('employee_residence')['usd'].mean().reset_index()
-            grafico_paises = px.choropleth(media_ds_pais,
-                locations='employee_residence',
-                color='usd',
-                color_continuous_scale='rdylgn',
-                title='Salário médio de Data Scientist por país',
-                labels={'usd': 'Salário médio (USD)'})
-            grafico_paises.update_layout(title_x=0.1)
-            st.plotly_chart(grafico_paises, use_container_width=True)
+        if not df_ds.empty and 'residencia' in df_ds.columns:
+            media_ds_pais = df_ds.groupby('residencia')['usd'].mean().reset_index()
+            media_ds_pais = media_ds_pais.sort_values('usd', ascending=False)
+            
+            # Converter ISO2 → ISO3 e pegar nome do país
+            def iso2_to_iso3(iso2):
+                try:
+                    return pycountry.countries.get(alpha_2=iso2).alpha_3
+                except:
+                    return None
+            
+            def iso2_to_name(iso2):
+                try:
+                    return pycountry.countries.get(alpha_2=iso2).name
+                except:
+                    return iso2
+            
+            media_ds_pais['iso3'] = media_ds_pais['residencia'].apply(iso2_to_iso3)
+            media_ds_pais['pais_nome'] = media_ds_pais['residencia'].apply(iso2_to_name)
+            media_ds_pais = media_ds_pais.dropna(subset=['iso3'])
+            
+            if len(media_ds_pais) > 0:
+                grafico_paises = px.choropleth(
+                    media_ds_pais,
+                    locations='iso3',
+                    color='usd',
+                    color_continuous_scale='rdylgn_r',
+                    title='Salário médio de Data Scientist por país',
+                    labels={'usd': 'Salário médio anual (USD)'},
+                    hover_name='pais_nome'  # ← Mostra nome completo no hover
+                )
+                grafico_paises.update_layout(title_x=0.1, height=500)
+                st.plotly_chart(grafico_paises, use_container_width=True)
+                
+                st.subheader("Top 10 países por salário")
+                st.dataframe(media_ds_pais[['pais_nome', 'residencia', 'iso3', 'usd']].head(10), use_container_width=True)
+            else:
+                st.warning("Nenhum código válido para mapear.")
         else:
-            st.warning("Nenhum Data Scientist ou coluna de residência encontrada.")
+            st.warning("Nenhum Data Scientist nos filtros.")
+    else:
+        st.warning("Nenhum dado nos filtros.")
+
 
 # --- Tabela de Dados Detalhados ---
 st.subheader("Dados Detalhados")
 st.dataframe(df_filtrado)
-     
